@@ -8,42 +8,43 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.*
-import java.util.stream.IntStream
+import kotlin.concurrent.thread
 
+
+fun RunStreamWriterPipeThread(inputStream: InputStream, outputStream: OutputStream) {
+    thread {
+        val b = ByteArray(1024)
+        var rc: Int
+        try {
+            while (true) {
+                rc = inputStream.read(b)
+                if (rc == 0) {
+                    break
+                }
+                outputStream.write(b, 0, rc)
+            }
+        } catch (ignored: Exception) {
+        }
+    }
+}
 class Executor @Throws(KeeperException::class, IOException::class, InterruptedException::class)
 constructor(hostPort: String,
             private val zNode: String,
             private val exec: Array<String>)
-    : Watcher, Runnable, DataMonitor.DataMonitorListener {
+    :  Watcher, Runnable, DataMonitorListener {
 
-    private val zooKeeper: ZooKeeper = ZooKeeper(hostPort, 10000, this)
-    private val dataMonitor: DataMonitor  = DataMonitor(zooKeeper, zNode, null, this)
+    private val zooKeeper: ZooKeeper = ZooKeeper(hostPort, 3000, this)
+    private val dataMonitor: DataMonitor  = DataMonitor(zooKeeper, zNode, this)
     private var child: Process? = null
 
     override fun process(event: WatchedEvent) {
         dataMonitor.process(event)
     }
 
-    override fun run() {
-        val scanner = Scanner(System.`in`)
-        while (scanner.hasNextLine()) {
-            val line = scanner.nextLine()
-            when (line) {
-                "tree" -> try {
-                    show(zNode, zNode, 0)
-                } catch (e: KeeperException) {
-                    e.printStackTrace()
-                } catch (e: InterruptedException) {
-                    e.printStackTrace()
-                }
-            }
-        }
-    }
-
     @Throws(KeeperException::class, InterruptedException::class)
     private fun show(child: String, path: String, i: Int) {
-        IntStream.rangeClosed(0, i).forEach { _ -> print(" ") }
-        println(child)
+        (0 until i).forEach { _ -> print("\t") }
+        println((if (i == 0) "" else "/") + child)
         zooKeeper.getChildren(path, dataMonitor).forEach { c ->
             try {
                 show(c, path + "/" + c, i + 1)
@@ -56,32 +57,23 @@ constructor(hostPort: String,
 
     }
 
-    override fun closing(rc: Int) {
-        synchronized(this) {
-            //notifyAll()
+    override fun run() {
+        val scanner = Scanner(System.`in`)
+        while (scanner.hasNextLine()) {
+            val line = scanner.nextLine()
+            when (line) {
+                "show" -> try {
+                    show(zNode, zNode, 0)
+                } catch (e: KeeperException) {
+                    e.printStackTrace()
+                } catch (e: InterruptedException) {
+                    e.printStackTrace()
+                }
+            }
         }
     }
 
-    internal class StreamWriter(var `is`: InputStream, var os: OutputStream) : Thread() {
-
-        init {
-            start()
-        }
-
-        override fun run() {
-//            val b = ByteArray(80)
-//            var rc: Int
-//            try {
-//                while ((rc = `is`.read(b)) > 0) {
-//                    os.write(b, 0, rc)
-//                }
-//            } catch (ignored: IOException) {
-//            }
-
-        }
-    }
-
-    override fun exists(data: ByteArray) {
+    override fun exists(data: ByteArray?) {
         if (data == null) {
             if (child != null) {
                 println("Killing process")
@@ -108,8 +100,8 @@ constructor(hostPort: String,
             try {
                 child = Runtime.getRuntime().exec(exec)
                 println("Starting child ")
-                StreamWriter(child!!.inputStream, System.out)
-                StreamWriter(child!!.errorStream, System.err)
+                RunStreamWriterPipeThread(child!!.inputStream, System.out)
+                RunStreamWriterPipeThread(child!!.errorStream, System.err)
             } catch (e: IOException) {
                 e.printStackTrace()
             }
@@ -117,4 +109,7 @@ constructor(hostPort: String,
         }
     }
 
+    override fun closing(rc: Int) {
+        System.exit(0)
+    }
 }
